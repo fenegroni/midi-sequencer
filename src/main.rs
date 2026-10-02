@@ -294,7 +294,7 @@ impl eframe::App for App {
 
             ui.separator();
             ui.small("Space starts and stops. R toggles recording.");
-            ui.small(&self.mcp_status);
+            ui.small(format!("{}   v{}", self.mcp_status, env!("CARGO_PKG_VERSION")));
             if !self.message.is_empty() {
                 ui.label(&self.message);
             }

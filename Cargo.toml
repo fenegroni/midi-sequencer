@@ -2,6 +2,9 @@
 name = "midi-sequencer"
 version = "0.1.0"
 edition = "2021"
+description = "A MIDI loop recorder for the AKAI MPK mini play 3 with a built-in MCP server"
+license = "GPL-3.0-or-later"
+authors = ["Filippo Negroni"]
 
 [dependencies]
 chrono = "0.4"
