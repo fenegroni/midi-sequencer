@@ -1,4 +1,4 @@
-use crate::seq::{note_name, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
+use crate::seq::{self, note_name, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -118,6 +118,10 @@ fn tools() -> Value {
          "description": "Sets the loop length in 4/4 bars. Notes beyond a shorter loop are kept but stay silent.",
          "inputSchema": {"type": "object", "required": ["bars"],
             "properties": {"bars": {"type": "integer", "minimum": 1, "maximum": MAX_BARS}}}},
+        {"name": "set_midi_out",
+         "description": "Switches the MIDI output. Use a name from midi_out_ports in the status. 'Microsoft GS Wavetable Synth' plays through the PC soundcard. MIDI thru turns on for every output except the MPK.",
+         "inputSchema": {"type": "object", "required": ["port"],
+            "properties": {"port": {"type": "string"}}}},
         {"name": "get_notes", "inputSchema": none,
          "description": "Returns every recorded note in the loop. Positions and durations are in beats, and start_beat 0 is the loop start. Channel 10 holds the drum pads."},
         {"name": "export_midi",
@@ -145,6 +149,14 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
             let bars = args.get("bars").and_then(Value::as_u64).ok_or("The argument 'bars' must be a positive integer.")?;
             s.set_bars(bars.min(MAX_BARS as u64) as u32);
         }
+        "set_midi_out" => {
+            let port = args.get("port").and_then(Value::as_str).ok_or("The argument 'port' must be a string.")?;
+            let ports = seq::out_ports();
+            if !ports.iter().any(|p| p == port) {
+                return Err(format!("There is no MIDI output named '{port}'. The outputs are {ports:?}."));
+            }
+            s.connect_out(port)?;
+        }
         "get_notes" => return Ok(notes(s)),
         "export_midi" => {
             let path = s.export(args.get("filename").and_then(Value::as_str))?;
@@ -165,8 +177,10 @@ fn status(s: &Seq) -> Value {
         "position": {"bar": beat / BEATS_PER_BAR + 1, "beat": beat % BEATS_PER_BAR + 1},
         "note_count": s.notes.len(),
         "metronome": s.metronome,
+        "midi_thru": s.thru,
         "midi_in": s.in_name,
         "midi_out": s.out_name,
+        "midi_out_ports": seq::out_ports(),
     })
 }
 

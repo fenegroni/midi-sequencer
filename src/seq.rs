@@ -1,4 +1,4 @@
-use midir::MidiOutputConnection;
+use midir::{MidiOutput, MidiOutputConnection};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,10 @@ pub const BEATS_PER_BAR: u32 = 4;
 pub const MIN_BPM: f32 = 20.0;
 pub const MAX_BPM: f32 = 300.0;
 pub const MAX_BARS: u32 = 64;
+
+pub const DEVICE_HINT: &str = "mpk";
+// Windows ships this software synth. It plays MIDI through the PC soundcard.
+pub const SOUNDCARD_HINT: &str = "gs wavetable";
 
 // The metronome plays a side stick on the General MIDI drum channel.
 const CLICK_CH: u8 = 9;
@@ -84,6 +88,23 @@ impl Seq {
         self.silence();
         self.out = out;
         self.out_name = name;
+    }
+
+    // Opens the named output. MIDI thru turns on for every output except the MPK,
+    // because only the MPK already plays what you press on it.
+    pub fn connect_out(&mut self, name: &str) -> Result<(), String> {
+        // The old connection must close first because Windows opens a port only once.
+        self.set_out(None, None);
+        let midi = MidiOutput::new("MidiSequencer out").map_err(|e| e.to_string())?;
+        let port = midi
+            .ports()
+            .into_iter()
+            .find(|p| midi.port_name(p).ok().as_deref() == Some(name))
+            .ok_or("The port is gone.".to_string())?;
+        let conn = midi.connect(&port, "out").map_err(|e| e.to_string())?;
+        self.set_out(Some(conn), Some(name.to_string()));
+        self.thru = !is_device(name);
+        Ok(())
     }
 
     fn send(&mut self, msg: &[u8]) {
@@ -287,6 +308,20 @@ impl Seq {
     }
 }
 
+pub fn out_ports() -> Vec<String> {
+    MidiOutput::new("MidiSequencer scan")
+        .map(|m| m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect())
+        .unwrap_or_default()
+}
+
+pub fn is_device(name: &str) -> bool {
+    name.to_lowercase().contains(DEVICE_HINT)
+}
+
+pub fn is_soundcard(name: &str) -> bool {
+    name.to_lowercase().contains(SOUNDCARD_HINT)
+}
+
 pub fn export_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join("Documents").join("MidiSequencer")
@@ -351,6 +386,13 @@ mod tests {
         s.play();
         s.advance(Duration::from_millis(2250));
         assert!((s.pos - 240.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn recognises_the_mpk_and_the_soundcard() {
+        assert!(is_device("MPK mini Play mk3"));
+        assert!(!is_device("Microsoft GS Wavetable Synth"));
+        assert!(is_soundcard("Microsoft GS Wavetable Synth"));
     }
 
     #[test]

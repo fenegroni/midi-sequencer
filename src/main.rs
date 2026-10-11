@@ -4,19 +4,16 @@ mod mcp;
 mod seq;
 
 use eframe::egui;
-use midir::{Ignore, MidiInput, MidiInputConnection, MidiOutput};
+use midir::{Ignore, MidiInput, MidiInputConnection};
 use seq::{Note, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-const DEVICE_HINT: &str = "mpk";
 
 struct App {
     seq: Arc<Mutex<Seq>>,
     in_ports: Vec<String>,
     out_ports: Vec<String>,
     in_sel: Option<String>,
-    out_sel: Option<String>,
     in_conn: Option<MidiInputConnection<()>>,
     last_scan: Instant,
     message: String,
@@ -36,7 +33,6 @@ impl App {
             in_ports: Vec::new(),
             out_ports: Vec::new(),
             in_sel: None,
-            out_sel: None,
             in_conn: None,
             last_scan: Instant::now(),
             message: String::new(),
@@ -52,17 +48,17 @@ impl App {
         self.in_ports = MidiInput::new("MidiSequencer scan")
             .map(|m| m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect())
             .unwrap_or_default();
-        self.out_ports = MidiOutput::new("MidiSequencer scan")
-            .map(|m| m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect())
-            .unwrap_or_default();
+        self.out_ports = seq::out_ports();
 
         if self.in_sel.as_ref().is_some_and(|n| !self.in_ports.contains(n)) {
             self.in_conn = None;
             self.in_sel = None;
             self.seq.lock().unwrap().in_name = None;
         }
-        if self.out_sel.as_ref().is_some_and(|n| !self.out_ports.contains(n)) {
-            self.out_sel = None;
+        // The output lives in Seq because the MCP server can change it too.
+        let out_name = self.seq.lock().unwrap().out_name.clone();
+        let out_gone = out_name.as_ref().is_some_and(|n| !self.out_ports.contains(n));
+        if out_gone {
             self.seq.lock().unwrap().set_out(None, None);
         }
         if self.in_sel.is_none() {
@@ -70,7 +66,7 @@ impl App {
                 self.connect_in(name);
             }
         }
-        if self.out_sel.is_none() {
+        if out_name.is_none() || out_gone {
             if let Some(name) = find_device(&self.out_ports) {
                 self.connect_out(name);
             }
@@ -106,27 +102,10 @@ impl App {
     }
 
     fn connect_out(&mut self, name: String) {
-        // The old connection must close first because Windows opens a port only once.
-        self.seq.lock().unwrap().set_out(None, None);
-        let result = (|| {
-            let midi = MidiOutput::new("MidiSequencer out").map_err(|e| e.to_string())?;
-            let port = midi
-                .ports()
-                .into_iter()
-                .find(|p| midi.port_name(p).ok().as_ref() == Some(&name))
-                .ok_or("The port is gone.".to_string())?;
-            midi.connect(&port, "out").map_err(|e| e.to_string())
-        })();
+        let result = self.seq.lock().unwrap().connect_out(&name);
         match result {
-            Ok(conn) => {
-                self.seq.lock().unwrap().set_out(Some(conn), Some(name.clone()));
-                self.out_sel = Some(name);
-                self.message.clear();
-            }
-            Err(e) => {
-                self.out_sel = None;
-                self.message = format!("MIDI output '{name}' failed: {e}");
-            }
+            Ok(()) => self.message.clear(),
+            Err(e) => self.message = format!("MIDI output '{name}' failed: {e}"),
         }
     }
 
@@ -139,17 +118,21 @@ impl App {
 }
 
 fn find_device(ports: &[String]) -> Option<String> {
-    ports.iter().find(|n| n.to_lowercase().contains(DEVICE_HINT)).cloned()
+    ports.iter().find(|n| seq::is_device(n)).cloned()
+}
+
+fn port_label(name: &str) -> &str {
+    if seq::is_soundcard(name) { "PC soundcard (GS Wavetable)" } else { name }
 }
 
 fn port_combo(ui: &mut egui::Ui, id: &str, ports: &[String], current: &Option<String>) -> Option<String> {
     let mut picked = None;
     egui::ComboBox::from_id_salt(id)
         .width(260.0)
-        .selected_text(current.as_deref().unwrap_or("(not connected)"))
+        .selected_text(current.as_deref().map_or("(not connected)", port_label))
         .show_ui(ui, |ui| {
             for name in ports {
-                if ui.selectable_label(current.as_ref() == Some(name), name).clicked() {
+                if ui.selectable_label(current.as_ref() == Some(name), port_label(name)).clicked() {
                     picked = Some(name.clone());
                 }
             }
@@ -212,10 +195,12 @@ impl eframe::App for App {
         }
 
         // The UI works on a snapshot so that drawing never stalls the MIDI clock.
-        let (mut bpm, mut bars, mut metronome, mut thru, playing, recording, pos, len, notes) = {
+        let (mut bpm, mut bars, mut metronome, mut thru, playing, recording, pos, len, notes, out_name) = {
             let s = self.seq.lock().unwrap();
-            (s.bpm, s.bars, s.metronome, s.thru, s.playing, s.recording, s.pos, s.len_ticks(), s.notes.clone())
+            (s.bpm, s.bars, s.metronome, s.thru, s.playing, s.recording, s.pos, s.len_ticks(), s.notes.clone(),
+             s.out_name.clone())
         };
+        let mut thru_clicked = false;
 
         let keys = !ctx.wants_keyboard_input();
         let space = keys && ctx.input(|i| i.key_pressed(egui::Key::Space));
@@ -229,7 +214,7 @@ impl eframe::App for App {
                 }
                 ui.end_row();
                 ui.label("MIDI out");
-                if let Some(name) = port_combo(ui, "out", &self.out_ports, &self.out_sel) {
+                if let Some(name) = port_combo(ui, "out", &self.out_ports, &out_name) {
                     self.connect_out(name);
                 }
                 ui.end_row();
@@ -262,8 +247,10 @@ impl eframe::App for App {
 
             ui.horizontal(|ui| {
                 ui.checkbox(&mut metronome, "Metronome");
-                ui.checkbox(&mut thru, "MIDI thru")
-                    .on_hover_text("Forwards what you play to the output. Leave this off when the output is the MPK itself.");
+                thru_clicked = ui
+                    .checkbox(&mut thru, "MIDI thru")
+                    .on_hover_text("Forwards what you play to the output. It turns on by itself for every output except the MPK.")
+                    .changed();
                 let beat = (pos / PPQ as f64) as u32;
                 ui.label(format!(
                     "Bar {}  Beat {}   {} notes",
@@ -309,7 +296,10 @@ impl eframe::App for App {
                 s.set_bars(bars);
             }
             s.metronome = metronome;
-            s.thru = thru;
+            // A new output sets thru during this frame, so only a click may overwrite it.
+            if thru_clicked {
+                s.thru = thru;
+            }
         }
 
         ctx.request_repaint_after(Duration::from_millis(if playing { 16 } else { 250 }));

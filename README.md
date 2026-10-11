@@ -31,11 +31,22 @@ The executable is `target\release\midi-sequencer.exe`.
 | --- | --- |
 | BPM, Bars | Set the tempo and the loop length in 4/4 bars. |
 | Metronome | Plays a side stick on the drum channel on every beat. |
-| MIDI thru | Forwards what you play to the output. Leave it off when the output is the MPK itself. |
+| MIDI out | Chooses where the notes play. **PC soundcard (GS Wavetable)** plays them through your speakers. |
+| MIDI thru | Forwards what you play to the output. It turns on by itself for every output except the MPK. |
 | Undo last take | Removes the notes of the latest recording pass. |
 | Clear | Removes every note. |
 
 The app records notes only. It ignores pitch bend and controller messages.
+
+### Play through the PC soundcard
+
+Windows includes a General MIDI synth called Microsoft GS Wavetable Synth. Choose
+**PC soundcard (GS Wavetable)** under **MIDI out** to hear the loop and the metronome on
+your PC instead of the MPK. The app turns MIDI thru on, so you also hear your live playing.
+
+- The synth adds about 100 ms of latency, so live playing feels a little late.
+- The MPK still plays its own sound when you press a key. Turn its volume down to hear only
+  the PC.
 
 ## MCP server
 
@@ -51,6 +62,7 @@ it for Claude Code sessions that start in this folder.
 | `set_recording` | Turns overdub recording on or off. |
 | `set_tempo` | Sets the tempo in beats per minute. |
 | `set_loop_length` | Sets the loop length in bars. |
+| `set_midi_out` | Switches the MIDI output, for example to the PC soundcard. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
 
