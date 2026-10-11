@@ -1,4 +1,4 @@
-use crate::seq::{self, note_name, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
+use crate::seq::{self, note_name, Note, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -122,6 +122,17 @@ fn tools() -> Value {
          "description": "Switches the MIDI output. Use a name from midi_out_ports in the status. 'Microsoft GS Wavetable Synth' plays through the PC soundcard. MIDI thru turns on for every output except the MPK.",
          "inputSchema": {"type": "object", "required": ["port"],
             "properties": {"port": {"type": "string"}}}},
+        {"name": "add_notes",
+         "description": "Writes notes into the loop as one new take, so 'Undo last take' removes them together. Positions and durations are in beats, and start_beat 0 is the loop start.",
+         "inputSchema": {"type": "object", "required": ["notes"],
+            "properties": {"notes": {"type": "array", "items": {"type": "object",
+                "required": ["start_beat", "duration_beats", "pitch"],
+                "properties": {
+                    "start_beat": {"type": "number", "minimum": 0},
+                    "duration_beats": {"type": "number", "exclusiveMinimum": 0},
+                    "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                    "velocity": {"type": "integer", "minimum": 1, "maximum": 127, "description": "The default is 100."},
+                    "channel": {"type": "integer", "minimum": 1, "maximum": 16, "description": "The default is 1. Channel 10 plays drums."}}}}}}},
         {"name": "get_notes", "inputSchema": none,
          "description": "Returns every recorded note in the loop. Positions and durations are in beats, and start_beat 0 is the loop start. Channel 10 holds the drum pads."},
         {"name": "export_midi",
@@ -157,6 +168,11 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
             }
             s.connect_out(port)?;
         }
+        "add_notes" => {
+            let list = args.get("notes").and_then(Value::as_array).ok_or("The argument 'notes' must be an array.")?;
+            let parsed = list.iter().map(|n| parse_note(n, s.len_ticks())).collect::<Result<Vec<_>, _>>()?;
+            s.add_take(&parsed);
+        }
         "get_notes" => return Ok(notes(s)),
         "export_midi" => {
             let path = s.export(args.get("filename").and_then(Value::as_str))?;
@@ -165,6 +181,21 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
         _ => return Err(format!("Unknown tool: {name}")),
     }
     Ok(status(s))
+}
+
+fn parse_note(n: &Value, len: u32) -> Result<Note, String> {
+    let num = |key: &str| n.get(key).and_then(Value::as_f64);
+    let start = num("start_beat").filter(|b| *b >= 0.0).ok_or("Every note needs a 'start_beat' of 0 or more.")?;
+    let dur = num("duration_beats").filter(|b| *b > 0.0).ok_or("Every note needs a positive 'duration_beats'.")?;
+    let pitch = num("pitch").filter(|p| (0.0..=127.0).contains(p)).ok_or("Every note needs a 'pitch' from 0 to 127.")?;
+    let vel = num("velocity").unwrap_or(100.0).clamp(1.0, 127.0);
+    let ch = num("channel").unwrap_or(1.0).clamp(1.0, 16.0);
+    let start = (start * PPQ as f64).round() as u32;
+    if start >= len {
+        return Err(format!("A note starts at beat {}, but the loop has only {} beats.", start / PPQ, len / PPQ));
+    }
+    let dur = ((dur * PPQ as f64).round() as u32).clamp(1, len - 1);
+    Ok(Note { start, dur, pitch: pitch as u8, vel: vel as u8, ch: ch as u8 - 1, take: 0 })
 }
 
 fn status(s: &Seq) -> Value {

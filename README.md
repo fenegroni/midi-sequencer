@@ -63,6 +63,7 @@ it for Claude Code sessions that start in this folder.
 | `set_tempo` | Sets the tempo in beats per minute. |
 | `set_loop_length` | Sets the loop length in bars. |
 | `set_midi_out` | Switches the MIDI output, for example to the PC soundcard. |
+| `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
 

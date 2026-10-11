@@ -154,6 +154,13 @@ impl Seq {
         self.recording = on;
     }
 
+    // Adds written notes as one new take, so undo removes them together.
+    pub fn add_take(&mut self, notes: &[Note]) {
+        self.take += 1;
+        let take = self.take;
+        self.notes.extend(notes.iter().map(|n| Note { take, ..*n }));
+    }
+
     pub fn undo_take(&mut self) {
         if let Some(last) = self.notes.iter().map(|n| n.take).max() {
             self.silence();
@@ -386,6 +393,16 @@ mod tests {
         s.play();
         s.advance(Duration::from_millis(2250));
         assert!((s.pos - 240.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn written_notes_undo_as_one_take() {
+        let mut s = Seq::new();
+        let n = Note { start: 0, dur: 480, pitch: 60, vel: 100, ch: 0, take: 0 };
+        s.add_take(&[n, Note { start: 480, ..n }]);
+        assert_eq!(s.notes.len(), 2);
+        s.undo_take();
+        assert!(s.notes.is_empty());
     }
 
     #[test]

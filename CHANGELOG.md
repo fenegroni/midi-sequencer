@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MIDI out list labels Microsoft GS Wavetable Synth as **PC soundcard (GS Wavetable)**.
 - MIDI thru turns on by itself when the output is not the MPK.
 - MCP tool `set_midi_out`, and the status fields `midi_thru` and `midi_out_ports`.
+- MCP tool `add_notes`, which writes notes into the loop as one take.
 
 ## [0.1.0] - 2026-10-02
 
