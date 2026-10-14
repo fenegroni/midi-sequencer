@@ -20,6 +20,17 @@ cargo run --release
 
 The executable is `target\release\midi-sequencer.exe`.
 
+### Run in the background
+
+```bash
+midi-sequencer.exe --headless
+```
+
+With `--headless` the app opens no window. It keeps the MIDI ports connected and serves MCP
+until an MCP client calls `quit`. A second headless copy exits at once, because the first one
+holds the server address. The [sequencer-panel](mod/sequencer-panel) Claude Code mod draws
+the controls in a pane and starts the app this way.
+
 ## Usage
 
 1. Plug in the MPK. The app connects to its input and output within two seconds.
@@ -67,6 +78,13 @@ it for Claude Code sessions that start in this folder.
 | `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
+| `set_midi_in` | Switches the MIDI input. |
+| `set_metronome` | Turns the metronome on or off. |
+| `set_midi_thru` | Turns MIDI thru on or off. |
+| `undo_take` | Removes the notes of the latest take. |
+| `clear` | Removes every note. |
+| `open_export_folder` | Opens the export folder in Windows Explorer. |
+| `quit` | Closes the app. |
 
 ## Versioning
 

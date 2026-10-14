@@ -1,124 +1,30 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mcp;
+mod ports;
 mod seq;
 
 use eframe::egui;
-use midir::{Ignore, MidiInput, MidiInputConnection};
+use ports::Ports;
 use seq::{Note, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 struct App {
     seq: Arc<Mutex<Seq>>,
-    in_ports: Vec<String>,
-    out_ports: Vec<String>,
-    in_sel: Option<String>,
-    in_conn: Option<MidiInputConnection<()>>,
+    ports: Arc<Mutex<Ports>>,
     last_scan: Instant,
     message: String,
     mcp_status: String,
 }
 
 impl App {
-    fn new() -> Self {
-        let seq = Arc::new(Mutex::new(Seq::new()));
-        seq::spawn_engine(seq.clone());
-        let mcp_status = match mcp::spawn(seq.clone()) {
-            Ok(()) => format!("MCP server: http://{}/mcp", mcp::ADDR),
-            Err(e) => format!("MCP server failed to start: {e}"),
-        };
-        let mut app = App {
-            seq,
-            in_ports: Vec::new(),
-            out_ports: Vec::new(),
-            in_sel: None,
-            in_conn: None,
-            last_scan: Instant::now(),
-            message: String::new(),
-            mcp_status,
-        };
-        app.scan();
-        app
-    }
-
-    // Lists the MIDI ports and connects to the MPK as soon as it shows up.
-    fn scan(&mut self) {
-        self.last_scan = Instant::now();
-        self.in_ports = MidiInput::new("MidiSequencer scan")
-            .map(|m| m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect())
-            .unwrap_or_default();
-        self.out_ports = seq::out_ports();
-
-        if self.in_sel.as_ref().is_some_and(|n| !self.in_ports.contains(n)) {
-            self.in_conn = None;
-            self.in_sel = None;
-            self.seq.lock().unwrap().in_name = None;
-        }
-        // The output lives in Seq because the MCP server can change it too.
-        let out_name = self.seq.lock().unwrap().out_name.clone();
-        let out_gone = out_name.as_ref().is_some_and(|n| !self.out_ports.contains(n));
-        if out_gone {
-            self.seq.lock().unwrap().set_out(None, None);
-        }
-        if self.in_sel.is_none() {
-            if let Some(name) = find_device(&self.in_ports) {
-                self.connect_in(name);
-            }
-        }
-        if out_name.is_none() || out_gone {
-            if let Some(name) = find_device(&self.out_ports) {
-                self.connect_out(name);
-            }
-        }
-    }
-
-    fn connect_in(&mut self, name: String) {
-        self.in_conn = None;
-        let seq = self.seq.clone();
-        let result = (|| {
-            let mut midi = MidiInput::new("MidiSequencer in").map_err(|e| e.to_string())?;
-            midi.ignore(Ignore::All);
-            let port = midi
-                .ports()
-                .into_iter()
-                .find(|p| midi.port_name(p).ok().as_ref() == Some(&name))
-                .ok_or("The port is gone.".to_string())?;
-            midi.connect(&port, "in", move |_, msg, _| seq.lock().unwrap().on_midi_in(msg), ())
-                .map_err(|e| e.to_string())
-        })();
-        match result {
-            Ok(conn) => {
-                self.in_conn = Some(conn);
-                self.in_sel = Some(name.clone());
-                self.seq.lock().unwrap().in_name = Some(name);
-                self.message.clear();
-            }
-            Err(e) => {
-                self.in_sel = None;
-                self.message = format!("MIDI input '{name}' failed: {e}");
-            }
-        }
-    }
-
-    fn connect_out(&mut self, name: String) {
-        let result = self.seq.lock().unwrap().connect_out(&name);
-        match result {
-            Ok(()) => self.message.clear(),
-            Err(e) => self.message = format!("MIDI output '{name}' failed: {e}"),
-        }
-    }
-
     fn export(&mut self) {
         self.message = match self.seq.lock().unwrap().export(None) {
             Ok(path) => format!("Exported {}", path.display()),
             Err(e) => format!("Export failed: {e}"),
         };
     }
-}
-
-fn find_device(ports: &[String]) -> Option<String> {
-    ports.iter().find(|n| seq::is_device(n)).cloned()
 }
 
 fn port_label(name: &str) -> &str {
@@ -191,10 +97,15 @@ fn draw_roll(ui: &mut egui::Ui, notes: &[Note], len: u32, pos: f64, playing: boo
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.last_scan.elapsed() > Duration::from_secs(2) {
-            self.scan();
+            self.last_scan = Instant::now();
+            self.ports.lock().unwrap().scan();
         }
 
         // The UI works on a snapshot so that drawing never stalls the MIDI clock.
+        let (in_ports, out_ports, in_sel, port_message) = {
+            let p = self.ports.lock().unwrap();
+            (p.in_ports.clone(), p.out_ports.clone(), p.in_sel.clone(), p.message.clone())
+        };
         let (mut bpm, mut bars, mut metronome, mut thru, playing, recording, pos, len, notes, out_name) = {
             let s = self.seq.lock().unwrap();
             (s.bpm, s.bars, s.metronome, s.thru, s.playing, s.recording, s.pos, s.len_ticks(), s.notes.clone(),
@@ -209,13 +120,13 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Grid::new("ports").num_columns(2).show(ui, |ui| {
                 ui.label("MIDI in");
-                if let Some(name) = port_combo(ui, "in", &self.in_ports, &self.in_sel) {
-                    self.connect_in(name);
+                if let Some(name) = port_combo(ui, "in", &in_ports, &in_sel) {
+                    let _ = self.ports.lock().unwrap().connect_in(name);
                 }
                 ui.end_row();
                 ui.label("MIDI out");
-                if let Some(name) = port_combo(ui, "out", &self.out_ports, &out_name) {
-                    self.connect_out(name);
+                if let Some(name) = port_combo(ui, "out", &out_ports, &out_name) {
+                    let _ = self.ports.lock().unwrap().connect_out(name);
                 }
                 ui.end_row();
             });
@@ -273,17 +184,17 @@ impl eframe::App for App {
                     self.export();
                 }
                 if ui.button("Open export folder").clicked() {
-                    let dir = seq::export_dir();
-                    let _ = std::fs::create_dir_all(&dir);
-                    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                    ports::open_export_folder();
                 }
             });
 
             ui.separator();
             ui.small("Space starts and stops. R toggles recording.");
             ui.small(format!("{}   v{}", self.mcp_status, env!("CARGO_PKG_VERSION")));
-            if !self.message.is_empty() {
-                ui.label(&self.message);
+            for line in [&port_message, &self.message] {
+                if !line.is_empty() {
+                    ui.label(line);
+                }
             }
         });
 
@@ -307,9 +218,35 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    let headless = std::env::args().skip(1).any(|a| a == "--headless");
+    let seq = Arc::new(Mutex::new(Seq::new()));
+    seq::spawn_engine(seq.clone());
+    let ports = Arc::new(Mutex::new(Ports::new(seq.clone())));
+    // The server starts first, so the address is taken before the slow first scan.
+    let mcp = mcp::spawn(seq.clone(), ports.clone());
+    ports.lock().unwrap().scan();
+
+    if headless {
+        // Without a window the MCP server is the only way in, so a second copy that cannot
+        // bind the address has nothing to do.
+        if let Err(e) = mcp {
+            eprintln!("MCP server failed to start: {e}");
+            std::process::exit(1);
+        }
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            ports.lock().unwrap().scan();
+        }
+    }
+
+    let mcp_status = match mcp {
+        Ok(()) => format!("MCP server: http://{}/mcp", mcp::ADDR),
+        Err(e) => format!("MCP server failed to start: {e}"),
+    };
+    let app = App { seq, ports, last_scan: Instant::now(), message: String::new(), mcp_status };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([560.0, 400.0]),
         ..Default::default()
     };
-    eframe::run_native("MIDI Sequencer", options, Box::new(|_cc| Ok(Box::new(App::new()))))
+    eframe::run_native("MIDI Sequencer", options, Box::new(|_cc| Ok(Box::new(app))))
 }

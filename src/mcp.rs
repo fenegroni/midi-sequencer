@@ -1,25 +1,27 @@
+use crate::ports::{self, Ports};
 use crate::seq::{self, note_name, Note, Seq, BEATS_PER_BAR, MAX_BARS, MAX_BPM, MIN_BPM, PPQ};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use tiny_http::{Header, Method, Request, Response, Server};
 
 pub const ADDR: &str = "127.0.0.1:7391";
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 // Serves MCP over streamable HTTP on localhost. Every reply is plain JSON.
-pub fn spawn(seq: Arc<Mutex<Seq>>) -> Result<(), String> {
+pub fn spawn(seq: Arc<Mutex<Seq>>, ports: Arc<Mutex<Ports>>) -> Result<(), String> {
     let server = Server::http(ADDR).map_err(|e| e.to_string())?;
     thread::spawn(move || {
         for req in server.incoming_requests() {
-            handle(req, &seq);
+            handle(req, &seq, &ports);
         }
     });
     Ok(())
 }
 
-fn handle(mut req: Request, seq: &Arc<Mutex<Seq>>) {
+fn handle(mut req: Request, seq: &Arc<Mutex<Seq>>, ports: &Arc<Mutex<Ports>>) {
     // A browser page on another origin must not be able to drive the sequencer.
     let foreign_origin = req.headers().iter().any(|h| {
         h.field.equiv("Origin") && {
@@ -47,10 +49,10 @@ fn handle(mut req: Request, seq: &Arc<Mutex<Seq>>) {
     }
     let reply = match serde_json::from_str::<Value>(&body) {
         Ok(Value::Array(batch)) => {
-            let out: Vec<Value> = batch.iter().filter_map(|m| rpc(m, seq)).collect();
+            let out: Vec<Value> = batch.iter().filter_map(|m| rpc(m, seq, ports)).collect();
             (!out.is_empty()).then(|| Value::Array(out))
         }
-        Ok(msg) => rpc(&msg, seq),
+        Ok(msg) => rpc(&msg, seq, ports),
         Err(_) => Some(json!({"jsonrpc": "2.0", "id": null,
             "error": {"code": -32700, "message": "Parse error"}})),
     };
@@ -63,7 +65,7 @@ fn handle(mut req: Request, seq: &Arc<Mutex<Seq>>) {
     };
 }
 
-fn rpc(msg: &Value, seq: &Arc<Mutex<Seq>>) -> Option<Value> {
+fn rpc(msg: &Value, seq: &Arc<Mutex<Seq>>, ports: &Arc<Mutex<Ports>>) -> Option<Value> {
     // A message without an id is a notification and gets no reply.
     let id = msg.get("id")?.clone();
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
@@ -83,7 +85,7 @@ fn rpc(msg: &Value, seq: &Arc<Mutex<Seq>>) -> Option<Value> {
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            let (text, is_error) = match call(name, &args, &mut seq.lock().unwrap()) {
+            let (text, is_error) = match call_tool(name, &args, seq, ports) {
                 Ok(v) => (v.to_string(), false),
                 Err(e) => (e, true),
             };
@@ -145,11 +147,80 @@ fn tools() -> Value {
          "description": "Exports the loop as a .mid file into the export folder and returns the full path.",
          "inputSchema": {"type": "object",
             "properties": {"filename": {"type": "string",
-                "description": "Optional file name without a folder. The default is a timestamped name."}}}}
+                "description": "Optional file name without a folder. The default is a timestamped name."}}}},
+        {"name": "set_midi_in",
+         "description": "Switches the MIDI input. Use a name from midi_in_ports in the status.",
+         "inputSchema": {"type": "object", "required": ["port"],
+            "properties": {"port": {"type": "string"}}}},
+        {"name": "set_metronome",
+         "description": "Turns the metronome on or off. It plays a side stick on the drum channel on every beat.",
+         "inputSchema": {"type": "object", "required": ["enabled"],
+            "properties": {"enabled": {"type": "boolean"}}}},
+        {"name": "set_midi_thru",
+         "description": "Turns MIDI thru on or off. Thru forwards what the user plays to the output.",
+         "inputSchema": {"type": "object", "required": ["enabled"],
+            "properties": {"enabled": {"type": "boolean"}}}},
+        {"name": "undo_take", "inputSchema": none,
+         "description": "Removes the notes of the latest take, which is one recording pass or one add_notes call."},
+        {"name": "clear", "inputSchema": none,
+         "description": "Removes every note from the loop."},
+        {"name": "open_export_folder", "inputSchema": none,
+         "description": "Opens the export folder in Windows Explorer on the user's screen."},
+        {"name": "quit", "inputSchema": none,
+         "description": "Closes the app. Notes that were not exported are lost."}
     ])
 }
 
-fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
+// Tools that need the ports run before the Seq lock is taken, because Ports takes that lock
+// itself. Every other tool runs under the Seq lock. Both answer with the status.
+fn call_tool(name: &str, args: &Value, seq: &Arc<Mutex<Seq>>, ports: &Arc<Mutex<Ports>>) -> Result<Value, String> {
+    match name {
+        "set_midi_in" => {
+            let port = args.get("port").and_then(Value::as_str).ok_or("The argument 'port' must be a string.")?;
+            let mut p = ports.lock().unwrap();
+            if !p.in_ports.iter().any(|n| n == port) {
+                p.scan();
+            }
+            if !p.in_ports.iter().any(|n| n == port) {
+                return Err(format!("There is no MIDI input named '{port}'. The inputs are {:?}.", p.in_ports));
+            }
+            p.connect_in(port.to_string())?;
+        }
+        "open_export_folder" => ports::open_export_folder(),
+        "quit" => {
+            // The reply goes out first, then the process ends.
+            thread::spawn(|| {
+                thread::sleep(Duration::from_millis(300));
+                std::process::exit(0);
+            });
+        }
+        _ => {
+            let lists = PortLists::of(ports);
+            let mut s = seq.lock().unwrap();
+            return call(name, args, &mut s).map(|v| v.unwrap_or_else(|| status(&s, &lists)));
+        }
+    }
+    let lists = PortLists::of(ports);
+    Ok(status(&seq.lock().unwrap(), &lists))
+}
+
+// The port lists as the last scan found them, so that polling the status stays cheap.
+struct PortLists {
+    in_ports: Vec<String>,
+    out_ports: Vec<String>,
+    message: String,
+}
+
+impl PortLists {
+    fn of(ports: &Arc<Mutex<Ports>>) -> Self {
+        let p = ports.lock().unwrap();
+        PortLists { in_ports: p.in_ports.clone(), out_ports: p.out_ports.clone(), message: p.message.clone() }
+    }
+}
+
+// Answers Some(value) for a tool with its own result, and None for one that answers with the
+// status.
+fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Option<Value>, String> {
     match name {
         "get_status" => {}
         "play" => s.play(),
@@ -185,14 +256,18 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
             let program = int("program", 128).ok_or("The argument 'program' must be an integer from 1 to 128.")?;
             s.set_program(ch as u8 - 1, program as u8 - 1);
         }
-        "get_notes" => return Ok(notes(s)),
+        "set_metronome" => s.metronome = flag(args)?,
+        "set_midi_thru" => s.thru = flag(args)?,
+        "undo_take" => s.undo_take(),
+        "clear" => s.clear(),
+        "get_notes" => return Ok(Some(notes(s))),
         "export_midi" => {
             let path = s.export(args.get("filename").and_then(Value::as_str))?;
-            return Ok(json!({"path": path.to_string_lossy(), "notes": s.notes.len()}));
+            return Ok(Some(json!({"path": path.to_string_lossy(), "notes": s.notes.len()})));
         }
         _ => return Err(format!("Unknown tool: {name}")),
     }
-    Ok(status(s))
+    Ok(None)
 }
 
 fn parse_note(n: &Value, len: u32) -> Result<Note, String> {
@@ -210,23 +285,30 @@ fn parse_note(n: &Value, len: u32) -> Result<Note, String> {
     Ok(Note { start, dur, pitch: pitch as u8, vel: vel as u8, ch: ch as u8 - 1, take: 0 })
 }
 
-fn status(s: &Seq) -> Value {
+fn flag(args: &Value) -> Result<bool, String> {
+    args.get("enabled").and_then(Value::as_bool).ok_or("The argument 'enabled' must be a boolean.".into())
+}
+
+fn status(s: &Seq, p: &PortLists) -> Value {
     let beat = (s.pos / PPQ as f64) as u32;
     json!({
         "state": if s.recording { "recording" } else if s.playing { "playing" } else { "stopped" },
         "bpm": s.bpm,
         "bars": s.bars,
         "beats_per_bar": BEATS_PER_BAR,
-        "position": {"bar": beat / BEATS_PER_BAR + 1, "beat": beat % BEATS_PER_BAR + 1},
+        "position": {"bar": beat / BEATS_PER_BAR + 1, "beat": beat % BEATS_PER_BAR + 1,
+            "beats": (s.pos / PPQ as f64 * 1000.0).round() / 1000.0},
         "note_count": s.notes.len(),
         "metronome": s.metronome,
         "midi_thru": s.thru,
         "midi_in": s.in_name,
         "midi_out": s.out_name,
-        "midi_out_ports": seq::out_ports(),
+        "midi_in_ports": p.in_ports,
+        "midi_out_ports": p.out_ports,
         "instruments": s.programs.iter().enumerate()
             .filter_map(|(ch, p)| p.map(|p| ((ch + 1).to_string(), json!(p + 1))))
             .collect::<serde_json::Map<_, _>>(),
+        "port_message": (!p.message.is_empty()).then_some(&p.message),
     })
 }
 
