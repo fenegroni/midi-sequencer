@@ -44,6 +44,8 @@ pub struct Seq {
     pending: HashMap<(u8, u8), (u32, u8)>,
     sounding: Vec<(u8, u8)>,
     click_on: bool,
+    // Only the channels that were set are sent, so the MPK keeps its own sounds otherwise.
+    pub programs: [Option<u8>; 16],
     out: Option<MidiOutputConnection>,
 }
 
@@ -64,6 +66,7 @@ impl Seq {
             pending: HashMap::new(),
             sounding: Vec::new(),
             click_on: false,
+            programs: [None; 16],
             out: None,
         }
     }
@@ -88,6 +91,18 @@ impl Seq {
         self.silence();
         self.out = out;
         self.out_name = name;
+        // A new output starts with its default sounds, so the chosen ones go out again.
+        for ch in 0..16u8 {
+            if let Some(program) = self.programs[ch as usize] {
+                self.send(&[0xC0 | ch, program]);
+            }
+        }
+    }
+
+    // Selects a General MIDI instrument, numbered from 0, on a channel numbered from 0.
+    pub fn set_program(&mut self, ch: u8, program: u8) {
+        self.programs[ch as usize] = Some(program);
+        self.send(&[0xC0 | ch, program]);
     }
 
     // Opens the named output. MIDI thru turns on for every output except the MPK,
@@ -403,6 +418,14 @@ mod tests {
         assert_eq!(s.notes.len(), 2);
         s.undo_take();
         assert!(s.notes.is_empty());
+    }
+
+    #[test]
+    fn remembers_only_the_instruments_that_were_set() {
+        let mut s = Seq::new();
+        s.set_program(1, 4);
+        assert_eq!(s.programs[1], Some(4));
+        assert_eq!(s.programs.iter().flatten().count(), 1);
     }
 
     #[test]

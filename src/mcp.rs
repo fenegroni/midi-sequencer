@@ -133,6 +133,12 @@ fn tools() -> Value {
                     "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                     "velocity": {"type": "integer", "minimum": 1, "maximum": 127, "description": "The default is 100."},
                     "channel": {"type": "integer", "minimum": 1, "maximum": 16, "description": "The default is 1. Channel 10 plays drums."}}}}}}},
+        {"name": "set_instrument",
+         "description": "Selects a General MIDI instrument for one channel, numbered 1 to 128 as in the GM list. Examples are 1 Acoustic Grand Piano, 5 Electric Piano 1, 33 Acoustic Bass, 34 Electric Bass (finger), 49 String Ensemble 1, and 89 Pad 1 (new age). On channel 10 the number picks a drum kit. The MPK plays on channel 1, so put written parts on another channel to give them their own sound.",
+         "inputSchema": {"type": "object", "required": ["channel", "program"],
+            "properties": {
+                "channel": {"type": "integer", "minimum": 1, "maximum": 16},
+                "program": {"type": "integer", "minimum": 1, "maximum": 128}}}},
         {"name": "get_notes", "inputSchema": none,
          "description": "Returns every recorded note in the loop. Positions and durations are in beats, and start_beat 0 is the loop start. Channel 10 holds the drum pads."},
         {"name": "export_midi",
@@ -173,6 +179,12 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Value, String> {
             let parsed = list.iter().map(|n| parse_note(n, s.len_ticks())).collect::<Result<Vec<_>, _>>()?;
             s.add_take(&parsed);
         }
+        "set_instrument" => {
+            let int = |key: &str, max: u64| args.get(key).and_then(Value::as_u64).filter(|v| (1..=max).contains(v));
+            let ch = int("channel", 16).ok_or("The argument 'channel' must be an integer from 1 to 16.")?;
+            let program = int("program", 128).ok_or("The argument 'program' must be an integer from 1 to 128.")?;
+            s.set_program(ch as u8 - 1, program as u8 - 1);
+        }
         "get_notes" => return Ok(notes(s)),
         "export_midi" => {
             let path = s.export(args.get("filename").and_then(Value::as_str))?;
@@ -212,6 +224,9 @@ fn status(s: &Seq) -> Value {
         "midi_in": s.in_name,
         "midi_out": s.out_name,
         "midi_out_ports": seq::out_ports(),
+        "instruments": s.programs.iter().enumerate()
+            .filter_map(|(ch, p)| p.map(|p| ((ch + 1).to_string(), json!(p + 1))))
+            .collect::<serde_json::Map<_, _>>(),
     })
 }
 
