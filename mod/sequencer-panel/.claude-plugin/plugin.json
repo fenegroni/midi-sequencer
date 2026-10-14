@@ -1,0 +1,20 @@
+{
+  "name": "sequencer-panel",
+  "version": "0.1.0",
+  "description": "Runs the MIDI Sequencer in the background and draws its controls and piano roll in a pane.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "exePath": {
+      "type": "string",
+      "title": "Sequencer executable",
+      "description": "The midi-sequencer.exe that the mod starts with --headless.",
+      "default": "C:\\Tools\\MidiSequencer\\midi-sequencer.exe"
+    },
+    "autostart": {
+      "type": "boolean",
+      "title": "Start with the session",
+      "description": "Starts the sequencer in the background when a session starts and it is not running.",
+      "default": true
+    }
+  }
+}
