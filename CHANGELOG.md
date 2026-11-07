@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP tool `remove_notes`, which removes the notes that match a channel, pitch, or start beat
   and returns how many went. It stops only the removed notes that sound now, so a playing loop
   can change without a gap.
+- The `add_notes` argument `sound_now`. When it is true, a new note whose span already holds
+  the playhead starts at once instead of waiting for the loop to reach its start.
 
 ### Fixed
 

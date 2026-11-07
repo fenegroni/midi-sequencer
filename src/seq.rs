@@ -176,6 +176,18 @@ impl Seq {
         self.notes.extend(notes.iter().map(|n| Note { take, ..*n }));
     }
 
+    // Starts the given notes that the playhead is already inside, so they sound before the loop
+    // comes round to their start. A key that already sounds is left alone, so it does not retrigger.
+    pub fn sound_now(&mut self, notes: &[Note]) {
+        for n in notes {
+            let key = (n.ch, n.pitch);
+            if self.covers(n) && !self.sounding.contains(&key) {
+                self.send(&[0x90 | n.ch, n.pitch, n.vel]);
+                self.sounding.push(key);
+            }
+        }
+    }
+
     // Removes the notes that match and returns how many went. Every other note keeps ringing.
     // A removed key gets a note-off only when it sounds now and no kept note on it covers the
     // playhead, because one note-off stops the key for every note on it.
@@ -733,6 +745,25 @@ mod tests {
         assert_eq!(s.remove_notes(|n| n.start == 480), 1);
         assert!(s.sounding.contains(&(0, 60)));
         assert_eq!(s.remove_notes(|n| n.pitch == 60), 1);
+        assert!(s.sounding.is_empty());
+    }
+
+    #[test]
+    fn sound_now_starts_only_the_notes_under_the_playhead() {
+        let inside = Note { start: 480, dur: 960, pitch: 60, vel: 100, ch: 0, take: 0 };
+        let later = Note { start: 1440, pitch: 62, ..inside };
+        let ended = Note { start: 0, dur: 480, pitch: 64, ..inside };
+        let mut s = playing_at_beat_two(&[]);
+        s.add_take(&[inside, later, ended]);
+        s.sound_now(&[inside, later, ended]);
+        assert_eq!(s.sounding, [(0, 60)]);
+
+        // The key already sounds, so a second note on it does not retrigger it.
+        s.sound_now(&[inside]);
+        assert_eq!(s.sounding, [(0, 60)]);
+
+        s.stop();
+        s.sound_now(&[inside]);
         assert!(s.sounding.is_empty());
     }
 

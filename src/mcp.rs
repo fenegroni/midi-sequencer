@@ -125,9 +125,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "required": ["port"],
             "properties": {"port": {"type": "string"}}}},
         {"name": "add_notes",
-         "description": "Writes notes into the loop as one new take, so 'Undo last take' removes them together. Positions and durations are in beats, and start_beat 0 is the loop start.",
+         "description": "Writes notes into the loop as one new take, so 'Undo last take' removes them together. Positions and durations are in beats, and start_beat 0 is the loop start. A new note first sounds when the playhead reaches its start, unless sound_now is true.",
          "inputSchema": {"type": "object", "required": ["notes"],
-            "properties": {"notes": {"type": "array", "items": {"type": "object",
+            "properties": {
+                "sound_now": {"type": "boolean", "description": "When true and the loop is playing, notes whose span already holds the playhead start at once. The default is false."},
+                "notes": {"type": "array", "items": {"type": "object",
                 "required": ["start_beat", "duration_beats", "pitch"],
                 "properties": {
                     "start_beat": {"type": "number", "minimum": 0},
@@ -270,6 +272,9 @@ fn call(name: &str, args: &Value, s: &mut Seq, lists: &PortLists) -> Result<Opti
             let list = args.get("notes").and_then(Value::as_array).ok_or("The argument 'notes' must be an array.")?;
             let parsed = list.iter().map(|n| parse_note(n, s.len_ticks())).collect::<Result<Vec<_>, _>>()?;
             s.add_take(&parsed);
+            if args.get("sound_now").and_then(Value::as_bool).unwrap_or(false) {
+                s.sound_now(&parsed);
+            }
         }
         "remove_notes" => {
             let ch = whole(args, "channel", 1, 16)?.map(|c| c as u8 - 1);

@@ -87,7 +87,7 @@ it for Claude Code sessions that start in this folder.
 | `set_loop_length` | Sets the loop length in bars. |
 | `set_midi_out` | Switches the MIDI output, for example to the PC soundcard. |
 | `set_instrument` | Selects a General MIDI instrument for one channel. |
-| `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. |
+| `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. With `sound_now`, notes under the playhead start at once. |
 | `remove_notes` | Removes the notes that match a channel, pitch, or start beat. Every other note keeps ringing. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
