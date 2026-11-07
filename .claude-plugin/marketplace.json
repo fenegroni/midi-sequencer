@@ -1,0 +1,12 @@
+{
+  "name": "midi-sequencer",
+  "owner": { "name": "Filippo Negroni" },
+  "description": "Claude Code mods for the MIDI Sequencer.",
+  "plugins": [
+    {
+      "name": "sequencer-panel",
+      "source": "./mod/sequencer-panel",
+      "description": "Runs the MIDI Sequencer in the background and draws its controls and piano roll in a pane."
+    }
+  ]
+}

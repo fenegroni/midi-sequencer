@@ -1,6 +1,7 @@
 {
   "name": "sequencer-panel",
   "version": "0.1.0",
+  "author": { "name": "Filippo Negroni" },
   "description": "Runs the MIDI Sequencer in the background and draws its controls and piano roll in a pane.",
   "types": "./types/index.d.ts",
   "userConfig": {

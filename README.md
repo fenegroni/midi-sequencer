@@ -31,6 +31,18 @@ until an MCP client calls `quit`. A second headless copy exits at once, because 
 holds the server address. The [sequencer-panel](mod/sequencer-panel) Claude Code mod draws
 the controls in a pane and starts the app this way.
 
+### Install the Claude Code mod
+
+Type this line at the prompt of a Claude Code session in a terminal:
+
+```
+/plugin install sequencer-panel --marketplace fenegroni/midi-sequencer
+```
+
+Answer `y` to add the marketplace, then pick a scope. The mod starts
+`C:\Tools\MidiSequencer\midi-sequencer.exe` by default. If your build lives elsewhere, change
+**Sequencer executable** in the mod's settings. `/sequencer` opens the pane.
+
 ## Usage
 
 1. Plug in the MPK. The app connects to its input and output within two seconds.
