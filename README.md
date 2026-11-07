@@ -90,6 +90,7 @@ it for Claude Code sessions that start in this folder.
 | `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
+| `import_midi` | Replaces the loop with a format 0 or 1 `.mid` file, with its tempo, length, and instruments. |
 | `set_midi_in` | Switches the MIDI input. |
 | `set_metronome` | Turns the metronome on or off. |
 | `set_midi_thru` | Turns MIDI thru on or off. |

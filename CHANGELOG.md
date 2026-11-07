@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP tool `import_midi`, which replaces the loop with the notes of a format 0 or 1 `.mid`
+  file as one take. It stops playback and takes the tempo, the loop length in whole bars, and
+  the instruments from the file. Notes that start after bar 64 are dropped and counted.
+
 ### Fixed
 
 - The exported `.mid` file selects the instruments chosen with `set_instrument`, so other

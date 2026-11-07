@@ -148,6 +148,11 @@ fn tools() -> Value {
          "inputSchema": {"type": "object",
             "properties": {"filename": {"type": "string",
                 "description": "Optional file name without a folder. The default is a timestamped name."}}}},
+        {"name": "import_midi",
+         "description": format!("Loads a format 0 or 1 .mid file and replaces the loop with its notes as one take. It stops playback and takes the tempo, the loop length in whole 4/4 bars, and the instruments from the file. Notes that start after bar {MAX_BARS} are dropped. Returns the path, the note count, and the dropped note count."),
+         "inputSchema": {"type": "object", "required": ["file"],
+            "properties": {"file": {"type": "string",
+                "description": "A file name in the export folder, or an absolute path. A name without an extension gets .mid."}}}},
         {"name": "set_midi_in",
          "description": "Switches the MIDI input. Use a name from midi_in_ports in the status.",
          "inputSchema": {"type": "object", "required": ["port"],
@@ -173,8 +178,17 @@ fn tools() -> Value {
 
 // Tools that need the ports run before the Seq lock is taken, because Ports takes that lock
 // itself. Every other tool runs under the Seq lock. Both answer with the status.
+// import_midi reads its file before it takes the lock, so the engine never waits on the disk.
 fn call_tool(name: &str, args: &Value, seq: &Arc<Mutex<Seq>>, ports: &Arc<Mutex<Ports>>) -> Result<Value, String> {
     match name {
+        "import_midi" => {
+            let file = args.get("file").and_then(Value::as_str).ok_or("The argument 'file' must be a string.")?;
+            let (path, smf) = seq::read_smf(file)?;
+            let mut s = seq.lock().unwrap();
+            let dropped = s.load_smf(smf);
+            return Ok(json!({"path": path.to_string_lossy(), "notes": s.notes.len(),
+                "dropped_notes": dropped, "bpm": s.bpm, "bars": s.bars}));
+        }
         "set_midi_in" => {
             let port = args.get("port").and_then(Value::as_str).ok_or("The argument 'port' must be a string.")?;
             let mut p = ports.lock().unwrap();
