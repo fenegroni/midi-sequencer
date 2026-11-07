@@ -274,7 +274,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
       tempoInput = (
-        <Input key="bpm" label="BPM" value={String(s.bpm)} submitLabel="set"
+        <Input key="bpm" label="BPM" value={bpmText(s.bpm)} submitLabel="set"
           onSubmit={text => {
             const bpm = Number(text)
             if (Number.isFinite(bpm)) void act($, 'set_tempo', { bpm })
@@ -304,7 +304,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="row" columnGap={2} flexWrap="wrap">
           <Text bold color={stateColor}>{stateText}</Text>
           <Text>Bar {pos.bar} Beat {pos.beat}</Text>
-          <Text>{s.bpm} BPM</Text>
+          <Text>{bpmText(s.bpm)} BPM</Text>
           <Text>{s.bars} {s.bars === 1 ? 'bar' : 'bars'}</Text>
           <Text dimColor>{s.note_count} notes</Text>
         </Box>
@@ -339,6 +339,11 @@ export const register: Register = (on, options) => {
       </Box>
     )
   })
+}
+
+// The app keeps the tempo as an f32, so 25.6 arrives as 25.600000381469727.
+function bpmText(bpm: number): string {
+  return String(Math.round(bpm * 100) / 100)
 }
 
 function portLabel(name: string): string {
