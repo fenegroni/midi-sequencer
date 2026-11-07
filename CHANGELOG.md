@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The exported `.mid` file selects the instruments chosen with `set_instrument`, so other
+  players no longer play every channel as piano.
+
 ## [0.2.0] - 2026-10-14
 
 ### Added

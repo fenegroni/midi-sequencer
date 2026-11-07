@@ -287,6 +287,12 @@ impl Seq {
         track.extend_from_slice(&[0x00, 0xFF, 0x51, 0x03]);
         track.extend_from_slice(&tempo.to_be_bytes()[1..]);
         track.extend_from_slice(&[0x00, 0xFF, 0x58, 0x04, BEATS_PER_BAR as u8, 2, 24, 8]);
+        // Other players start every channel on piano, so the chosen instruments go first.
+        for (ch, program) in self.programs.iter().enumerate() {
+            if let Some(p) = program {
+                track.extend_from_slice(&[0x00, 0xC0 | ch as u8, *p]);
+            }
+        }
         let mut last = 0;
         for (tick, _, msg) in events {
             write_vlq(&mut track, tick - last);
@@ -398,6 +404,19 @@ mod tests {
         let track_len = u32::from_be_bytes(smf[18..22].try_into().unwrap()) as usize;
         assert_eq!(smf.len(), 22 + track_len);
         assert_eq!(&smf[smf.len() - 3..], &[0xFF, 0x2F, 0x00]);
+    }
+
+    #[test]
+    fn export_selects_the_chosen_instruments_at_the_start() {
+        let mut s = Seq::new();
+        s.set_program(2, 32);
+        s.set_program(9, 0);
+        s.add_take(&[Note { start: 0, dur: 480, pitch: 60, vel: 100, ch: 2, take: 0 }]);
+        let smf = s.to_smf();
+        let track = &smf[22..];
+        // The tempo and time signature meta events take the first 15 bytes.
+        assert_eq!(&track[15..21], &[0x00, 0xC2, 32, 0x00, 0xC9, 0]);
+        assert_eq!(&track[21..25], &[0x00, 0x92, 60, 100]);
     }
 
     #[test]
