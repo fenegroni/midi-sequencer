@@ -88,6 +88,7 @@ it for Claude Code sessions that start in this folder.
 | `set_midi_out` | Switches the MIDI output, for example to the PC soundcard. |
 | `set_instrument` | Selects a General MIDI instrument for one channel. |
 | `add_notes` | Writes notes into the loop as one take, so **Undo last take** removes them. |
+| `remove_notes` | Removes the notes that match a channel, pitch, or start beat. Every other note keeps ringing. |
 | `get_notes` | Returns every recorded note. |
 | `export_midi` | Exports the loop as a `.mid` file and returns its path. |
 | `import_midi` | Replaces the loop with a format 0 or 1 `.mid` file, with its tempo, length, and instruments. |

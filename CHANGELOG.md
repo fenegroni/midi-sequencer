@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP tool `import_midi`, which replaces the loop with the notes of a format 0 or 1 `.mid`
   file as one take. It stops playback and takes the tempo, the loop length in whole bars, and
   the instruments from the file. Notes that start after bar 64 are dropped and counted.
+- MCP tool `remove_notes`, which removes the notes that match a channel, pitch, or start beat
+  and returns how many went. It stops only the removed notes that sound now, so a playing loop
+  can change without a gap.
 
 ### Fixed
 

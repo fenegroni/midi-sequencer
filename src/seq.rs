@@ -176,6 +176,42 @@ impl Seq {
         self.notes.extend(notes.iter().map(|n| Note { take, ..*n }));
     }
 
+    // Removes the notes that match and returns how many went. Every other note keeps ringing.
+    // A removed key gets a note-off only when it sounds now and no kept note on it covers the
+    // playhead, because one note-off stops the key for every note on it.
+    pub fn remove_notes(&mut self, matches: impl Fn(&Note) -> bool) -> usize {
+        let before = self.notes.len();
+        let mut keys = Vec::new();
+        self.notes.retain(|n| {
+            let hit = matches(n);
+            if hit {
+                keys.push((n.ch, n.pitch));
+            }
+            !hit
+        });
+        keys.sort_unstable();
+        keys.dedup();
+        for key in keys {
+            let kept = self.notes.iter().any(|n| (n.ch, n.pitch) == key && self.covers(n));
+            if self.sounding.contains(&key) && !kept {
+                self.send(&[0x80 | key.0, key.1, 0]);
+                self.sounding.retain(|s| *s != key);
+            }
+        }
+        before - self.notes.len()
+    }
+
+    // True when the playhead is past the note's start and not yet past its end. fire() sends
+    // the note-on once the playhead has passed the start, and the note-off once it has passed the end.
+    fn covers(&self, n: &Note) -> bool {
+        let len = self.len_ticks();
+        if !self.playing || n.start >= len {
+            return false;
+        }
+        let elapsed = (self.pos - n.start as f64).rem_euclid(len as f64);
+        elapsed > 0.0 && elapsed <= n.dur as f64
+    }
+
     pub fn undo_take(&mut self) {
         if let Some(last) = self.notes.iter().map(|n| n.take).max() {
             self.silence();
@@ -660,6 +696,44 @@ mod tests {
         assert_eq!(s.notes.len(), 2);
         s.undo_take();
         assert!(s.notes.is_empty());
+    }
+
+    // Plays one 4-beat bar at 120 beats per minute up to beat 2, which is tick 960.
+    fn playing_at_beat_two(notes: &[Note]) -> Seq {
+        let mut s = Seq::new();
+        s.bpm = 120.0;
+        s.set_bars(1);
+        s.add_take(notes);
+        s.play();
+        s.advance(Duration::from_millis(1000));
+        s
+    }
+
+    #[test]
+    fn removing_notes_stops_only_the_removed_ones() {
+        let n = Note { start: 0, dur: 1900, pitch: 60, vel: 100, ch: 0, take: 0 };
+        let mut s = playing_at_beat_two(&[n, Note { pitch: 64, ..n }, Note { pitch: 67, ch: 1, ..n }]);
+        assert_eq!(s.sounding.len(), 3);
+
+        assert_eq!(s.remove_notes(|n| n.pitch == 64), 1);
+        assert_eq!(s.sounding, [(0, 60), (1, 67)]);
+        assert_eq!(s.remove_notes(|n| n.ch == 1), 1);
+        assert_eq!(s.sounding, [(0, 60)]);
+        assert_eq!(s.remove_notes(|n| n.pitch == 99), 0);
+        assert_eq!(s.notes.len(), 1);
+        assert!(s.playing);
+    }
+
+    #[test]
+    fn a_kept_note_on_the_same_key_keeps_ringing() {
+        let long = Note { start: 0, dur: 1900, pitch: 60, vel: 100, ch: 0, take: 0 };
+        let short = Note { start: 480, dur: 960, ..long };
+        let mut s = playing_at_beat_two(&[long, short]);
+
+        assert_eq!(s.remove_notes(|n| n.start == 480), 1);
+        assert!(s.sounding.contains(&(0, 60)));
+        assert_eq!(s.remove_notes(|n| n.pitch == 60), 1);
+        assert!(s.sounding.is_empty());
     }
 
     #[test]

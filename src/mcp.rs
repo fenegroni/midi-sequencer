@@ -135,6 +135,13 @@ fn tools() -> Value {
                     "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
                     "velocity": {"type": "integer", "minimum": 1, "maximum": 127, "description": "The default is 100."},
                     "channel": {"type": "integer", "minimum": 1, "maximum": 16, "description": "The default is 1. Channel 10 plays drums."}}}}}}},
+        {"name": "remove_notes",
+         "description": "Removes every note that matches all the given filters. Give at least one of channel, pitch and start_beat. Only removed notes that sound now are stopped, so every other note keeps ringing. undo_take can not bring removed notes back. Returns the status and the removed note count.",
+         "inputSchema": {"type": "object",
+            "properties": {
+                "channel": {"type": "integer", "minimum": 1, "maximum": 16},
+                "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+                "start_beat": {"type": "number", "minimum": 0, "description": "The start in beats, as get_notes shows it."}}}},
         {"name": "set_instrument",
          "description": "Selects a General MIDI instrument for one channel, numbered 1 to 128 as in the GM list. Examples are 1 Acoustic Grand Piano, 5 Electric Piano 1, 33 Acoustic Bass, 34 Electric Bass (finger), 49 String Ensemble 1, and 89 Pad 1 (new age). On channel 10 the number picks a drum kit. The MPK plays on channel 1, so put written parts on another channel to give them their own sound.",
          "inputSchema": {"type": "object", "required": ["channel", "program"],
@@ -211,7 +218,7 @@ fn call_tool(name: &str, args: &Value, seq: &Arc<Mutex<Seq>>, ports: &Arc<Mutex<
         _ => {
             let lists = PortLists::of(ports);
             let mut s = seq.lock().unwrap();
-            return call(name, args, &mut s).map(|v| v.unwrap_or_else(|| status(&s, &lists)));
+            return call(name, args, &mut s, &lists).map(|v| v.unwrap_or_else(|| status(&s, &lists)));
         }
     }
     let lists = PortLists::of(ports);
@@ -234,7 +241,7 @@ impl PortLists {
 
 // Answers Some(value) for a tool with its own result, and None for one that answers with the
 // status.
-fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Option<Value>, String> {
+fn call(name: &str, args: &Value, s: &mut Seq, lists: &PortLists) -> Result<Option<Value>, String> {
     match name {
         "get_status" => {}
         "play" => s.play(),
@@ -263,6 +270,26 @@ fn call(name: &str, args: &Value, s: &mut Seq) -> Result<Option<Value>, String> 
             let list = args.get("notes").and_then(Value::as_array).ok_or("The argument 'notes' must be an array.")?;
             let parsed = list.iter().map(|n| parse_note(n, s.len_ticks())).collect::<Result<Vec<_>, _>>()?;
             s.add_take(&parsed);
+        }
+        "remove_notes" => {
+            let ch = whole(args, "channel", 1, 16)?.map(|c| c as u8 - 1);
+            let pitch = whole(args, "pitch", 0, 127)?.map(|p| p as u8);
+            let start = match args.get("start_beat") {
+                None | Some(Value::Null) => None,
+                Some(v) => {
+                    let b = v.as_f64().filter(|b| *b >= 0.0).ok_or("The argument 'start_beat' must be a number of 0 or more.")?;
+                    Some((b * PPQ as f64).round() as u32)
+                }
+            };
+            if ch.is_none() && pitch.is_none() && start.is_none() {
+                return Err("Give at least one of 'channel', 'pitch' and 'start_beat'.".into());
+            }
+            let removed = s.remove_notes(|n| {
+                ch.map_or(true, |c| n.ch == c) && pitch.map_or(true, |p| n.pitch == p) && start.map_or(true, |t| n.start == t)
+            });
+            let mut v = status(s, lists);
+            v["removed"] = json!(removed);
+            return Ok(Some(v));
         }
         "set_instrument" => {
             let int = |key: &str, max: u64| args.get(key).and_then(Value::as_u64).filter(|v| (1..=max).contains(v));
@@ -297,6 +324,18 @@ fn parse_note(n: &Value, len: u32) -> Result<Note, String> {
     }
     let dur = ((dur * PPQ as f64).round() as u32).clamp(1, len - 1);
     Ok(Note { start, dur, pitch: pitch as u8, vel: vel as u8, ch: ch as u8 - 1, take: 0 })
+}
+
+// Reads an optional whole number. A value that is given must lie in min..=max.
+fn whole(args: &Value, key: &str, min: u64, max: u64) -> Result<Option<u64>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .filter(|x| (min..=max).contains(x))
+            .map(Some)
+            .ok_or(format!("The argument '{key}' must be an integer from {min} to {max}.")),
+    }
 }
 
 fn flag(args: &Value) -> Result<bool, String> {
